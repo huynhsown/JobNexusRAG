@@ -15,6 +15,11 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { PromptDialog } from "@/components/ui/prompt-dialog";
+import {
+  CreateJobDialog,
+  type CreateJobFormValues,
+} from "@/components/ui/create-job-dialog";
 import type {
   Company,
   JobPosting,
@@ -180,6 +185,11 @@ export function RecruiterDashboard() {
   const { data: jobDetail } = useJobDetail(selectedJobId);
   const [candidates, setCandidates] = useState<MatchResult[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
+  const [promptState, setPromptState] = useState<
+    | { open: false }
+    | { open: true; kind: "company"; defaultValue?: string }
+  >({ open: false });
+  const [createJobOpen, setCreateJobOpen] = useState(false);
 
   const createCompany = useMutation({
     mutationFn: (data: { name: string }) =>
@@ -191,12 +201,7 @@ export function RecruiterDashboard() {
   });
 
   const createJob = useMutation({
-    mutationFn: (data: {
-      company_id: number;
-      title: string;
-      description_text?: string;
-      skills_required?: string[];
-    }) => api.post<JobPosting>("/jobs", data),
+    mutationFn: (data: CreateJobFormValues) => api.post<JobPosting>("/jobs", data),
     onSuccess: (j) => {
       qc.invalidateQueries({ queryKey: ["jobs"] });
       setSelectedJobId(j.id);
@@ -239,22 +244,52 @@ export function RecruiterDashboard() {
       toast.error("Create a company first");
       return;
     }
-    const title = prompt("Job title:");
-    if (title) {
-      createJob.mutate({
-        company_id: companies[0].id,
-        title,
-      });
-    }
+    setCreateJobOpen(true);
   };
 
   const handleQuickCreateCompany = () => {
-    const name = prompt("Company name:");
-    if (name) createCompany.mutate({ name });
+    setPromptState({ open: true, kind: "company" });
   };
 
   return (
-    <div className="h-full overflow-hidden grid grid-cols-[280px_1fr_1fr] gap-0">
+    <>
+      <PromptDialog
+        open={promptState.open}
+        defaultValue={promptState.open ? promptState.defaultValue : ""}
+        title={
+          promptState.open ? "Create company" : "Create company"
+        }
+        message={
+          "Enter a company name."
+        }
+        placeholder={
+          "e.g. Acme Corp"
+        }
+        confirmLabel="Create"
+        cancelLabel="Cancel"
+        onCancel={() => setPromptState({ open: false })}
+        onSubmit={(value) => {
+          if (promptState.open && promptState.kind === "company") {
+            createCompany.mutate({ name: value });
+            setPromptState({ open: false });
+            return;
+          }
+        }}
+      />
+
+      <CreateJobDialog
+        open={createJobOpen}
+        companies={companies}
+        defaultCompanyId={companies?.[0]?.id}
+        submitting={createJob.isPending}
+        onCancel={() => setCreateJobOpen(false)}
+        onSubmit={(values: CreateJobFormValues) => {
+          createJob.mutate(values);
+          setCreateJobOpen(false);
+        }}
+      />
+
+      <div className="h-full overflow-hidden grid grid-cols-[280px_1fr_1fr] gap-0">
       {/* Column 1: Jobs List */}
       <div className="border-r flex flex-col overflow-hidden">
         <div className="p-3 border-b flex items-center justify-between">
@@ -428,6 +463,7 @@ export function RecruiterDashboard() {
           ))}
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }

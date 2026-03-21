@@ -15,4 +15,4 @@ if [ ! -d "node_modules" ]; then
 fi
 
 echo "Starting NexusRAG frontend on port 5174..."
-pnpm dev
+pnpm dev --host 0.0.0.0 --port 5174

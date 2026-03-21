@@ -59,6 +59,24 @@ else
     HAS_DOCKER=false
 fi
 
+# System libs (needed by OpenCV/cv2 via Docling)
+if [ "$(uname -s)" = "Linux" ] && command -v apt-get &>/dev/null; then
+    echo ""
+    echo "  Checking system libraries (for CV/JD parsing)..."
+    if ! ldconfig -p 2>/dev/null | grep -q "libGL.so.1"; then
+        echo "  Installing missing system libs: libgl1, libglib2.0-0"
+        if command -v sudo &>/dev/null; then
+            sudo apt-get update -y
+            sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+        else
+            apt-get update -y
+            apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+        fi
+    else
+        echo "  libGL.so.1 found."
+    fi
+fi
+
 echo ""
 
 # -----------------------------------------------------------
