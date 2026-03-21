@@ -53,6 +53,9 @@ class Candidate(Base):
         back_populates="candidate", cascade="all, delete-orphan",
         foreign_keys="MatchResult.candidate_id",
     )
+    applications: Mapped[list["JobApplication"]] = relationship(
+        back_populates="candidate", cascade="all, delete-orphan"
+    )
 
 
 class CandidateCV(Base):

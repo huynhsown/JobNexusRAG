@@ -114,4 +114,4 @@ app.mount("/static/doc-images", StaticFiles(directory=str(_docling_data)), name=
 
 # Import models so SQLAlchemy registers them
 from app.models import knowledge_base, document, chat_message  # noqa: E402, F401
-from app.models import candidate, job, match  # noqa: E402, F401
+from app.models import candidate, job, match, job_application  # noqa: E402, F401

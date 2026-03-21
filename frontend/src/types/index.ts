@@ -361,3 +361,11 @@ export interface MatchResult {
   explanation: string | null;
   status: MatchStatus;
 }
+
+export interface JobApplicationResponse {
+  job_id: number;
+  candidate_id: number;
+  status: "applied" | "withdrawn";
+  application_id: number;
+  created: boolean;
+}

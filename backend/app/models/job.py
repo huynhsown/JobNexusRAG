@@ -88,3 +88,6 @@ class JobPosting(Base):
         back_populates="job", cascade="all, delete-orphan",
         foreign_keys="MatchResult.job_id",
     )
+    applications: Mapped[list["JobApplication"]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )

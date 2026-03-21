@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.candidate import Candidate, CandidateCV, CVStatus
 from app.models.job import JobPosting, Company, JobStatus
+from app.models.job_application import JobApplication, ApplicationStatus
 from app.models.match import MatchResult, MatchStatus
 from app.services.embedder import get_embedding_service
 from app.services.reranker import get_reranker_service
@@ -195,6 +196,18 @@ class MatchingService:
 
         required_skills = set(s.lower() for s in (job.skills_required or []))
 
+        applied_candidates_result = await self.db.execute(
+            select(JobApplication.candidate_id).where(
+                JobApplication.job_id == job_id,
+                JobApplication.status == ApplicationStatus.APPLIED,
+            )
+        )
+        applied_candidate_ids = {
+            row[0] for row in applied_candidates_result.all() if row and row[0]
+        }
+        if not applied_candidate_ids:
+            return []
+
         # Vector over-fetch from cv_chunks
         prefetch_k = max(settings.NEXUSRAG_VECTOR_PREFETCH, top_k * 3)
         query_embedding = self.embedder.embed_query(query_text)
@@ -229,6 +242,8 @@ class MatchingService:
             meta = raw_results["metadatas"][idx] if raw_results.get("metadatas") else {}
             candidate_id = meta.get("candidate_id", 0)
             if not candidate_id or candidate_id in seen_candidates:
+                continue
+            if candidate_id not in applied_candidate_ids:
                 continue
             seen_candidates.add(candidate_id)
 

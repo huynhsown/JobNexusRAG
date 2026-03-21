@@ -14,6 +14,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.deps import get_db
+from app.models.candidate import Candidate
+from app.models.job_application import JobApplication, ApplicationStatus
 from app.models.job import Company, JobPosting, JobStatus, EmploymentType
 from app.schemas.job import (
     CompanyCreate,
@@ -303,4 +305,53 @@ async def get_job_candidates(
             }
             for m in matches
         ],
+    }
+
+
+@router.post("/{job_id}/apply/{candidate_id}", status_code=status.HTTP_201_CREATED)
+async def apply_to_job(
+    job_id: int,
+    candidate_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create/update a candidate application for a job (idempotent)."""
+    job_result = await db.execute(select(JobPosting).where(JobPosting.id == job_id))
+    if job_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    candidate_result = await db.execute(
+        select(Candidate).where(Candidate.id == candidate_id)
+    )
+    if candidate_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    app_result = await db.execute(
+        select(JobApplication).where(
+            JobApplication.job_id == job_id,
+            JobApplication.candidate_id == candidate_id,
+        )
+    )
+    application = app_result.scalar_one_or_none()
+    created = False
+
+    if application is None:
+        application = JobApplication(
+            job_id=job_id,
+            candidate_id=candidate_id,
+            status=ApplicationStatus.APPLIED,
+        )
+        db.add(application)
+        created = True
+    else:
+        application.status = ApplicationStatus.APPLIED
+
+    await db.commit()
+    await db.refresh(application)
+
+    return {
+        "job_id": job_id,
+        "candidate_id": candidate_id,
+        "status": application.status.value,
+        "application_id": application.id,
+        "created": created,
     }

@@ -13,8 +13,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
-import type { Candidate, CandidateCV, MatchResult } from "@/types";
+import { api, applyCandidateToJob } from "@/lib/api";
+import type {
+  Candidate,
+  CandidateCV,
+  JobApplicationResponse,
+  MatchResult,
+} from "@/types";
 
 // ---------------------------------------------------------------------------
 // API hooks
@@ -68,7 +73,17 @@ function ScoreBar({ score, label }: { score: number; label: string }) {
 // Match Card
 // ---------------------------------------------------------------------------
 
-function MatchCard({ match }: { match: MatchResult }) {
+function MatchCard({
+  match,
+  canApply,
+  isApplying,
+  onApply,
+}: {
+  match: MatchResult;
+  canApply: boolean;
+  isApplying: boolean;
+  onApply: (jobId: number) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -110,6 +125,22 @@ function MatchCard({ match }: { match: MatchResult }) {
           />
         </div>
       </div>
+
+      {canApply && (
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onApply(match.job_id);
+            }}
+            disabled={isApplying}
+            className="text-xs px-2.5 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isApplying ? "Applying..." : "Apply"}
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
         {expanded && (
@@ -168,6 +199,7 @@ export function CandidateDashboard() {
   const { data: detail } = useCandidateDetail(selectedId);
   const [matches, setMatches] = useState<MatchResult[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
+  const [appliedJobIds, setAppliedJobIds] = useState<Set<number>>(new Set());
 
   const createCandidate = useMutation({
     mutationFn: (data: { name: string; email?: string }) =>
@@ -221,6 +253,18 @@ export function CandidateDashboard() {
     const name = prompt("Candidate name:");
     if (name) createCandidate.mutate({ name });
   };
+
+  const applyJob = useMutation({
+    mutationFn: ({ jobId, candidateId }: { jobId: number; candidateId: number }) =>
+      applyCandidateToJob(jobId, candidateId),
+    onSuccess: (res: JobApplicationResponse) => {
+      setAppliedJobIds((prev) => new Set(prev).add(res.job_id));
+      toast.success(res.created ? "Applied successfully" : "Application already exists");
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : "Failed to apply");
+    },
+  });
 
   return (
     <div className="h-full overflow-hidden grid grid-cols-[280px_1fr_1fr] gap-0">
@@ -388,7 +432,16 @@ export function CandidateDashboard() {
             </div>
           )}
           {matches.map((m) => (
-            <MatchCard key={m.id} match={m} />
+            <MatchCard
+              key={m.id}
+              match={m}
+              canApply={!!selectedId && !appliedJobIds.has(m.job_id)}
+              isApplying={applyJob.isPending}
+              onApply={(jobId) => {
+                if (!selectedId) return;
+                applyJob.mutate({ jobId, candidateId: selectedId });
+              }}
+            />
           ))}
         </div>
       </div>

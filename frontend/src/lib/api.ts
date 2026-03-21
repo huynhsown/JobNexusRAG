@@ -99,3 +99,13 @@ class ApiClient {
 }
 
 export const api = new ApiClient();
+
+export function applyCandidateToJob(jobId: number, candidateId: number) {
+  return api.post<{
+    job_id: number;
+    candidate_id: number;
+    status: "applied" | "withdrawn";
+    application_id: number;
+    created: boolean;
+  }>(`/jobs/${jobId}/apply/${candidateId}`, {});
+}
