@@ -3,7 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR/backend"
+cd "$SCRIPT_DIR/backend_v2"
 
 # Activate NexusRAG's own venv
 if [ -d "$SCRIPT_DIR/venv" ]; then
@@ -15,4 +15,4 @@ else
 fi
 
 echo "Starting NexusRAG backend on port 8080..."
-uvicorn app.main:app --reload --port 8080
+uvicorn app.main:fastapi_app --host 0.0.0.0 --reload --port 8080
