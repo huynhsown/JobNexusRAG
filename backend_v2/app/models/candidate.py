@@ -6,7 +6,18 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import String, ForeignKey, DateTime, Integer, Text, Enum, Float, JSON
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -29,6 +40,9 @@ class Candidate(Base):
     __tablename__ = "candidates"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    source_candidate_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, unique=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -38,6 +52,7 @@ class Candidate(Base):
     desired_salary_max: Mapped[float | None] = mapped_column(Float, nullable=True)
     experience_years: Mapped[float | None] = mapped_column(Float, nullable=True)
     education_level: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    open_to_work: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     status: Mapped[CandidateStatus] = mapped_column(
         Enum(CandidateStatus), default=CandidateStatus.ACTIVE
     )
@@ -62,13 +77,19 @@ class CandidateCV(Base):
     __tablename__ = "candidate_cvs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    source_cv_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, unique=True, index=True
+    )
     candidate_id: Mapped[int] = mapped_column(
         ForeignKey("candidates.id", ondelete="CASCADE"), index=True
     )
-    filename: Mapped[str] = mapped_column(String(255))
-    original_filename: Mapped[str] = mapped_column(String(255))
-    file_type: Mapped[str] = mapped_column(String(50))
-    file_size: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_searchable: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    content_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[CVStatus] = mapped_column(
         Enum(CVStatus), default=CVStatus.PENDING
     )
@@ -89,3 +110,10 @@ class CandidateCV(Base):
     )
 
     candidate: Mapped["Candidate"] = relationship(back_populates="cvs")
+    applications: Mapped[list["JobApplication"]] = relationship(
+        back_populates="candidate_cv"
+    )
+    matches: Mapped[list["MatchResult"]] = relationship(
+        back_populates="candidate_cv",
+        foreign_keys="MatchResult.candidate_cv_id",
+    )

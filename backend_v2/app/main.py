@@ -9,11 +9,14 @@ import logging
 import os
 
 from fastapi import FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.database import engine, Base
+from app.core.schema_bootstrap import bootstrap_schema
+from app.core.security import install_api_key_middleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,6 +29,7 @@ async def lifespan(fastapi_app: FastAPI):
     if auto_create:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await bootstrap_schema(conn, logger)
         logger.info("Database tables created/verified (job-domain only)")
     else:
         logger.info("AUTO_CREATE_TABLES=false — skipping create_all")
@@ -44,6 +48,52 @@ fastapi_app = FastAPI(
     redirect_slashes=False,
 )
 
+
+def custom_openapi():
+    if fastapi_app.openapi_schema:
+        return fastapi_app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=fastapi_app.title,
+        version=fastapi_app.version,
+        description=fastapi_app.description,
+        routes=fastapi_app.routes,
+    )
+
+    components = openapi_schema.setdefault("components", {})
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Authorization header: Bearer <token>",
+    }
+    security_schemes["ApiKeyAuth"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": settings.API_KEY_HEADER,
+        "description": f"API key header: {settings.API_KEY_HEADER}",
+    }
+
+    protected_prefixes = tuple(
+        p.strip() for p in settings.API_KEY_PROTECTED_PREFIXES.split(",") if p.strip()
+    ) or ("/api/",)
+    for path, path_item in openapi_schema.get("paths", {}).items():
+        if not any(path.startswith(prefix) for prefix in protected_prefixes):
+            continue
+        for method in ("get", "post", "put", "patch", "delete", "options", "head"):
+            operation = path_item.get(method)
+            if not operation:
+                continue
+            # Require both schemes so Swagger includes both headers when authorized.
+            operation["security"] = [{"ApiKeyAuth": [], "BearerAuth": []}]
+
+    fastapi_app.openapi_schema = openapi_schema
+    return fastapi_app.openapi_schema
+
+
+fastapi_app.openapi = custom_openapi
+
 fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -51,6 +101,8 @@ fastapi_app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+install_api_key_middleware(fastapi_app, settings, logger)
 
 
 @fastapi_app.exception_handler(Exception)

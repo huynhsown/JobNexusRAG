@@ -116,6 +116,48 @@ class GeminiLLMProvider(LLMProvider):
         budget = _BUDGET_MAP.get(self._thinking_level, 4096)
         return types.ThinkingConfig(thinking_budget=budget)
 
+    def _build_non_thinking_config(self) -> types.ThinkingConfig | None:
+        """Minimize/disable Gemini's default hidden thinking when think=False.
+
+        Gemini 2.5 enables thinking by default unless ``thinking_budget=0`` is
+        set explicitly. Gemini 3.x uses level-based configuration, so the
+        closest non-thinking behavior is ``minimal``.
+        """
+        if not self.supports_thinking():
+            return None
+        if self._major_version >= 3:
+            return types.ThinkingConfig(thinking_level="minimal")
+        return types.ThinkingConfig(thinking_budget=0)
+
+    def _build_generate_config(
+        self,
+        *,
+        temperature: float,
+        max_tokens: int,
+        system_prompt: Optional[str] = None,
+        think: bool = False,
+        tools: list | None = None,
+    ) -> tuple[types.GenerateContentConfig, bool]:
+        """Build a Gemini GenerateContentConfig aligned with the ``think`` flag."""
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+        if system_prompt:
+            config.system_instruction = system_prompt
+        if tools:
+            config.tools = tools
+
+        use_think = think and self.supports_thinking()
+        thinking_config = (
+            self._build_thinking_config()
+            if use_think
+            else self._build_non_thinking_config()
+        )
+        if thinking_config is not None:
+            config.thinking_config = thinking_config
+        return config, use_think
+
     # ------------------------------------------------------------------
     # LLMProvider interface
     # ------------------------------------------------------------------
@@ -131,16 +173,12 @@ class GeminiLLMProvider(LLMProvider):
     ) -> str | LLMResult:
         contents = self._to_contents(messages)
 
-        config = types.GenerateContentConfig(
+        config, use_think = self._build_generate_config(
             temperature=temperature,
-            max_output_tokens=max_tokens,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+            think=think,
         )
-        if system_prompt:
-            config.system_instruction = system_prompt
-
-        use_think = think and self.supports_thinking()
-        if use_think:
-            config.thinking_config = self._build_thinking_config()
 
         try:
             response = self._client.models.generate_content(
@@ -188,18 +226,13 @@ class GeminiLLMProvider(LLMProvider):
         """
         contents = self._to_contents(messages)
 
-        config = types.GenerateContentConfig(
+        config, use_think = self._build_generate_config(
             temperature=temperature,
-            max_output_tokens=max_tokens,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+            think=think,
+            tools=tools,
         )
-        if system_prompt:
-            config.system_instruction = system_prompt
-        if tools:
-            config.tools = tools
-
-        use_think = think and self.supports_thinking()
-        if use_think:
-            config.thinking_config = self._build_thinking_config()
 
         # Accumulate raw parts so callers can access the full response
         # including thought_signature for proper multi-turn circulation.

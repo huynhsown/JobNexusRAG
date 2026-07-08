@@ -6,7 +6,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import String, ForeignKey, DateTime, Integer, Text, Enum, Float, JSON
+from sqlalchemy import BigInteger, String, ForeignKey, DateTime, Integer, Text, Enum, Float, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -30,6 +30,9 @@ class Company(Base):
     __tablename__ = "companies"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    source_company_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, unique=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(255))
     industry: Mapped[str | None] = mapped_column(String(255), nullable=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -49,6 +52,9 @@ class JobPosting(Base):
     __tablename__ = "job_postings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    source_job_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, unique=True, index=True
+    )
     company_id: Mapped[int] = mapped_column(
         ForeignKey("companies.id", ondelete="CASCADE"), index=True
     )

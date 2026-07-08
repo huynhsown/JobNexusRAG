@@ -17,6 +17,7 @@ class CandidateCreate(BaseModel):
     desired_salary_max: float | None = None
     experience_years: float | None = None
     education_level: str | None = None
+    open_to_work: bool | None = None
 
 
 class CandidateUpdate(BaseModel):
@@ -29,11 +30,13 @@ class CandidateUpdate(BaseModel):
     desired_salary_max: float | None = None
     experience_years: float | None = None
     education_level: str | None = None
+    open_to_work: bool | None = None
     status: CandidateStatus | None = None
 
 
 class CandidateResponse(BaseModel):
     id: int
+    source_candidate_id: int | None = None
     name: str
     email: str | None = None
     phone: str | None = None
@@ -43,6 +46,7 @@ class CandidateResponse(BaseModel):
     desired_salary_max: float | None = None
     experience_years: float | None = None
     education_level: str | None = None
+    open_to_work: bool | None = None
     status: CandidateStatus
     created_at: datetime
     updated_at: datetime
@@ -52,18 +56,33 @@ class CandidateResponse(BaseModel):
 
 class CVUploadResponse(BaseModel):
     id: int
+    source_candidate_id: int
+    source_cv_id: int
     candidate_id: int
     filename: str
     status: CVStatus
     message: str
 
 
+class CVProcessResponse(BaseModel):
+    status: str
+    source_candidate_id: int
+    source_cv_id: int
+    chunk_count: int | None = None
+    message: str
+
+
 class CVResponse(BaseModel):
     id: int
+    source_cv_id: int | None = None
     candidate_id: int
-    original_filename: str
-    file_type: str
-    file_size: int
+    title: str | None = None
+    filename: str | None = None
+    original_filename: str | None = None
+    file_type: str | None = None
+    file_size: int | None = None
+    is_searchable: bool = False
+    content_hash: str | None = None
     status: CVStatus
     chunk_count: int = 0
     page_count: int = 0
@@ -74,6 +93,7 @@ class CVResponse(BaseModel):
     processing_time_ms: int = 0
     error_message: str | None = None
     created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 

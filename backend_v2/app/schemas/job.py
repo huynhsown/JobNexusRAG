@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from app.models.job import EmploymentType, JobStatus
+from app.models.job_application import ApplicationStatus, CvResolutionStatus
 
 
 class CompanyCreate(BaseModel):
@@ -17,6 +18,7 @@ class CompanyCreate(BaseModel):
 
 class CompanyResponse(BaseModel):
     id: int
+    source_company_id: int | None = None
     name: str
     industry: str | None = None
     location: str | None = None
@@ -55,6 +57,7 @@ class JobPostingUpdate(BaseModel):
 
 class JobPostingResponse(BaseModel):
     id: int
+    source_job_id: int | None = None
     company_id: int
     title: str
     description_text: str | None = None
@@ -77,3 +80,23 @@ class JobPostingResponse(BaseModel):
 class JobPostingDetailResponse(JobPostingResponse):
     company: CompanyResponse | None = None
     markdown_content: str | None = None
+
+
+class ApplyToJobRequest(BaseModel):
+    candidate_cv_id: int | None = None
+    note: str | None = None
+
+
+class JobApplicationResponse(BaseModel):
+    id: int
+    source_application_id: int | None = None
+    job_id: int
+    candidate_id: int
+    candidate_cv_id: int | None = None
+    status: ApplicationStatus
+    cv_resolution_status: CvResolutionStatus
+    note: str | None = None
+    applied_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

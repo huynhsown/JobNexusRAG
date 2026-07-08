@@ -3,7 +3,7 @@
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16
     container_name: nexusrag-postgres
     environment:
       POSTGRES_USER: postgres
@@ -49,8 +49,8 @@ services:
     volumes:
       - nexusrag_uploads:/app/backend/uploads
       - nexusrag_data:/app/backend/data
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s

@@ -4,7 +4,7 @@ Matching/recommendation schemas for request/response validation.
 from pydantic import BaseModel, Field
 from datetime import datetime
 
-from app.models.match import MatchStatus
+from app.models.match import MatchMode, MatchStatus
 
 
 class MatchRequest(BaseModel):
@@ -31,8 +31,13 @@ class MatchExplanation(BaseModel):
 
 class MatchResultResponse(BaseModel):
     id: int
+    mode: MatchMode
     candidate_id: int
+    source_candidate_id: int | None = None
     job_id: int
+    candidate_cv_id: int | None = None
+    application_id: int | None = None
+    source_application_id: int | None = None
     overall_score: float
     scores: ScoreBreakdown
     matched_skills: list[str] | None = None
@@ -40,26 +45,34 @@ class MatchResultResponse(BaseModel):
     explanation: str | None = None
     status: MatchStatus
     created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class CandidateToJobsResponse(BaseModel):
     candidate_id: int
+    source_candidate_id: int | None = None
     matches: list[MatchResultResponse]
     total: int
 
 
 class JobToCandidatesResponse(BaseModel):
     job_id: int
+    source_job_id: int | None = None
     matches: list[MatchResultResponse]
     total: int
 
 
 class MatchExplainResponse(BaseModel):
     match_id: int
+    mode: MatchMode
     candidate_id: int
+    source_candidate_id: int | None = None
     job_id: int
+    candidate_cv_id: int | None = None
+    application_id: int | None = None
+    source_application_id: int | None = None
     overall_score: float
     scores: ScoreBreakdown
     explanation: MatchExplanation

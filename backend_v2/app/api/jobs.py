@@ -14,17 +14,19 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.deps import get_db
-from app.models.candidate import Candidate
-from app.models.job_application import JobApplication, ApplicationStatus
-from app.models.job import Company, JobPosting, JobStatus, EmploymentType
+from app.models.job import Company, JobPosting, JobStatus
+from app.models.job_application import JobApplication
 from app.schemas.job import (
+    ApplyToJobRequest,
     CompanyCreate,
     CompanyResponse,
+    JobApplicationResponse,
     JobPostingCreate,
     JobPostingUpdate,
     JobPostingResponse,
     JobPostingDetailResponse,
 )
+from app.services.sync_service import SyncReferenceError, SyncService
 
 logger = logging.getLogger(__name__)
 
@@ -276,12 +278,12 @@ async def get_job_candidates(
     top_k: int = 10,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get candidate recommendations for a job (triggers fresh matching)."""
+    """Get talent-pool recommendations for a job using searchable CVs only."""
     from app.services.matching_service import MatchingService
 
     svc = MatchingService(db)
     try:
-        matches = await svc.match_job_to_candidates(job_id, top_k=top_k)
+        matches = await svc.find_talent_for_job(job_id, top_k=top_k)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -291,7 +293,10 @@ async def get_job_candidates(
         "matches": [
             {
                 "id": m.id,
+                "mode": m.mode.value,
                 "candidate_id": m.candidate_id,
+                "candidate_cv_id": m.candidate_cv_id,
+                "application_id": m.application_id,
                 "overall_score": m.overall_score,
                 "semantic_score": m.semantic_score,
                 "skill_match_score": m.skill_match_score,
@@ -308,50 +313,35 @@ async def get_job_candidates(
     }
 
 
-@router.post("/{job_id}/apply/{candidate_id}", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{job_id}/apply/{candidate_id}",
+    response_model=JobApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def apply_to_job(
     job_id: int,
     candidate_id: int,
+    body: ApplyToJobRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Create/update a candidate application for a job (idempotent)."""
-    job_result = await db.execute(select(JobPosting).where(JobPosting.id == job_id))
-    if job_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+    """Create/update an application without guessing the applied CV incorrectly."""
+    service = SyncService(db)
+    req = body or ApplyToJobRequest()
 
-    candidate_result = await db.execute(
-        select(Candidate).where(Candidate.id == candidate_id)
-    )
-    if candidate_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-
-    app_result = await db.execute(
-        select(JobApplication).where(
-            JobApplication.job_id == job_id,
-            JobApplication.candidate_id == candidate_id,
-        )
-    )
-    application = app_result.scalar_one_or_none()
-    created = False
-
-    if application is None:
-        application = JobApplication(
+    try:
+        outcome = await service.resolve_local_application(
             job_id=job_id,
             candidate_id=candidate_id,
-            status=ApplicationStatus.APPLIED,
+            candidate_cv_id=req.candidate_cv_id,
+            note=req.note,
         )
-        db.add(application)
-        created = True
-    else:
-        application.status = ApplicationStatus.APPLIED
+    except SyncReferenceError as exc:
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 409
+        raise HTTPException(status_code=status_code, detail=detail)
 
-    await db.commit()
-    await db.refresh(application)
-
-    return {
-        "job_id": job_id,
-        "candidate_id": candidate_id,
-        "status": application.status.value,
-        "application_id": application.id,
-        "created": created,
-    }
+    application_result = await db.execute(
+        select(JobApplication).where(JobApplication.id == outcome.instance_id)
+    )
+    application = application_result.scalar_one()
+    return application

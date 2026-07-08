@@ -12,7 +12,12 @@ export default defineConfig({
   },
   server: {
     port: 5174,
-    allowedHosts: ['*.ngrok-free.app', '.ngrok-free.app'],
+    allowedHosts: [
+      'ai.itrecruitment.dpdns.org',
+      'itrecruitment.dpdns.org',
+      'localhost',
+      '127.0.0.1',
+    ],
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

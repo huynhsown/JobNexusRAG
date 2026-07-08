@@ -8,7 +8,7 @@ import uuid
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -21,7 +21,14 @@ from app.schemas.candidate import (
     CandidateResponse,
     CandidateDetailResponse,
     CVResponse,
+    CVProcessResponse,
     CVUploadResponse,
+)
+from app.services.candidate_reference_service import (
+    CandidateCVMismatchError,
+    CandidateReferenceService,
+    SourceCandidateNotFoundError,
+    SourceCVNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +62,7 @@ async def create_candidate(
         desired_salary_max=body.desired_salary_max,
         experience_years=body.experience_years,
         education_level=body.education_level,
+        open_to_work=body.open_to_work,
     )
     db.add(candidate)
     await db.commit()
@@ -148,9 +156,10 @@ async def delete_candidate(
             svc.delete_cv_chunks(cv.id)
         except Exception:
             pass
-        file_path = UPLOAD_DIR / cv.filename
-        if file_path.exists():
-            os.remove(file_path)
+        if cv.filename:
+            file_path = UPLOAD_DIR / cv.filename
+            if file_path.exists():
+                os.remove(file_path)
 
     await db.delete(candidate)
     await db.commit()
@@ -160,18 +169,24 @@ async def delete_candidate(
 # CV Upload & Processing
 # ------------------------------------------------------------------
 
-@router.post("/{candidate_id}/upload-cv", response_model=CVUploadResponse)
+@router.post("/{source_candidate_id}/upload-cv", response_model=CVUploadResponse)
 async def upload_cv(
-    candidate_id: int,
+    source_candidate_id: int,
+    source_cv_id: int = Form(..., alias="sourceCvId"),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a CV file for a candidate."""
-    result = await db.execute(
-        select(Candidate).where(Candidate.id == candidate_id)
-    )
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    """Upload a CV file for a candidate resolved by source ID."""
+    reference_service = CandidateReferenceService(db)
+    try:
+        upload_context = await reference_service.prepare_candidate_cv_upload(
+            source_candidate_id=source_candidate_id,
+            source_cv_id=source_cv_id,
+        )
+    except SourceCandidateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except CandidateCVMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -184,54 +199,103 @@ async def upload_cv(
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File too large (max 50MB)")
 
+    candidate = upload_context.candidate
+    cv = upload_context.cv
+    old_filename = cv.filename
+    old_status = cv.status
+
     filename = f"{uuid.uuid4()}{ext}"
     file_path = UPLOAD_DIR / filename
     with open(file_path, "wb") as f:
         f.write(content)
 
-    cv = CandidateCV(
-        candidate_id=candidate_id,
-        filename=filename,
-        original_filename=file.filename,
-        file_type=ext[1:],
-        file_size=len(content),
-        status=CVStatus.PENDING,
-    )
-    db.add(cv)
+    if not upload_context.created and (
+        cv.chunk_count > 0 or old_status == CVStatus.INDEXED
+    ):
+        from app.services.job_processing_service import JobProcessingService
+
+        JobProcessingService(db).delete_cv_chunks(cv.id)
+
+    cv.source_cv_id = source_cv_id
+    cv.candidate_id = candidate.id
+    cv.filename = filename
+    cv.original_filename = file.filename
+    cv.file_type = ext[1:]
+    cv.file_size = len(content)
+    cv.is_searchable = False
+    cv.status = CVStatus.PENDING
+    cv.content_hash = None
+    cv.markdown_content = None
+    cv.chunk_count = 0
+    cv.page_count = 0
+    cv.skills_extracted = None
+    cv.experience_extracted = None
+    cv.education_extracted = None
+    cv.summary_extracted = None
+    cv.processing_time_ms = 0
+    cv.error_message = None
+
     await db.commit()
     await db.refresh(cv)
 
+    if old_filename and old_filename != filename:
+        old_file_path = UPLOAD_DIR / old_filename
+        if old_file_path.exists():
+            os.remove(old_file_path)
+
     return CVUploadResponse(
         id=cv.id,
-        candidate_id=candidate_id,
+        source_candidate_id=(
+            candidate.source_candidate_id
+            if candidate.source_candidate_id is not None
+            else source_candidate_id
+        ),
+        source_cv_id=cv.source_cv_id,
+        candidate_id=candidate.id,
         filename=cv.original_filename,
         status=cv.status,
         message="CV uploaded. Trigger processing to extract and index.",
     )
 
 
-@router.post("/{candidate_id}/process/{cv_id}")
+@router.post("/{source_candidate_id}/process/{source_cv_id}", response_model=CVProcessResponse)
 async def process_cv(
-    candidate_id: int,
-    cv_id: int,
+    source_candidate_id: int,
+    source_cv_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger CV processing (parse + extract + index)."""
-    result = await db.execute(
-        select(CandidateCV).where(
-            CandidateCV.id == cv_id,
-            CandidateCV.candidate_id == candidate_id,
+    """Trigger CV processing (parse + extract + index) by source IDs."""
+    reference_service = CandidateReferenceService(db)
+    try:
+        candidate, cv = await reference_service.require_candidate_cv_pair(
+            source_candidate_id=source_candidate_id,
+            source_cv_id=source_cv_id,
         )
-    )
-    cv = result.scalar_one_or_none()
-    if cv is None:
-        raise HTTPException(status_code=404, detail="CV not found")
+    except SourceCandidateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except SourceCVNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except CandidateCVMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
     if cv.status == CVStatus.INDEXED:
-        return {"status": "already_indexed", "cv_id": cv_id, "chunk_count": cv.chunk_count}
+        return CVProcessResponse(
+            status="already_indexed",
+            source_candidate_id=(
+                candidate.source_candidate_id
+                if candidate.source_candidate_id is not None
+                else source_candidate_id
+            ),
+            source_cv_id=cv.source_cv_id if cv.source_cv_id is not None else source_cv_id,
+            chunk_count=cv.chunk_count,
+            message="CV already indexed",
+        )
 
     if cv.status in (CVStatus.PARSING, CVStatus.INDEXING):
         raise HTTPException(status_code=400, detail="CV is already being processed")
+
+    if not cv.filename:
+        raise HTTPException(status_code=404, detail="CV file not found on disk")
 
     file_path = UPLOAD_DIR / cv.filename
     if not file_path.exists():
@@ -245,16 +309,25 @@ async def process_cv(
         async with async_session_maker() as session:
             from app.services.job_processing_service import JobProcessingService
             svc = JobProcessingService(session)
-            await svc.process_cv(cv_id, str(file_path))
+            await svc.process_cv(cv.id, str(file_path))
 
-    asyncio.get_event_loop().create_task(_process())
+    asyncio.create_task(_process())
 
-    return {"status": "processing", "cv_id": cv_id, "message": "CV processing started"}
+    return CVProcessResponse(
+        status="processing",
+        source_candidate_id=(
+            candidate.source_candidate_id
+            if candidate.source_candidate_id is not None
+            else source_candidate_id
+        ),
+        source_cv_id=cv.source_cv_id if cv.source_cv_id is not None else source_cv_id,
+        message="CV processing started",
+    )
 
 
-@router.get("/{candidate_id}/recommendations")
+@router.get("/{source_candidate_id}/recommendations")
 async def get_candidate_recommendations(
-    candidate_id: int,
+    source_candidate_id: int,
     top_k: int = 10,
     db: AsyncSession = Depends(get_db),
 ):
@@ -263,17 +336,24 @@ async def get_candidate_recommendations(
 
     svc = MatchingService(db)
     try:
-        matches = await svc.match_candidate_to_jobs(candidate_id, top_k=top_k)
+        candidate, matches = await svc.match_candidate_to_jobs_by_source_candidate_id(
+            source_candidate_id,
+            top_k=top_k,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     return {
-        "candidate_id": candidate_id,
+        "candidate_id": candidate.id,
+        "source_candidate_id": candidate.source_candidate_id,
         "total": len(matches),
         "matches": [
             {
                 "id": m.id,
+                "mode": m.mode.value,
                 "job_id": m.job_id,
+                "candidate_cv_id": m.candidate_cv_id,
+                "application_id": m.application_id,
                 "overall_score": m.overall_score,
                 "semantic_score": m.semantic_score,
                 "skill_match_score": m.skill_match_score,

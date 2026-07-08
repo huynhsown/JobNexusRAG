@@ -275,6 +275,7 @@ export type MatchStatus = "pending" | "accepted" | "rejected";
 
 export interface Candidate {
   id: number;
+  source_candidate_id?: number | null;
   name: string;
   email: string | null;
   phone: string | null;
@@ -291,6 +292,7 @@ export interface Candidate {
 
 export interface CandidateCV {
   id: number;
+  source_cv_id?: number | null;
   candidate_id: number;
   original_filename: string;
   file_type: string;

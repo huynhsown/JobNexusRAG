@@ -197,6 +197,7 @@ export function CandidateDashboard() {
   const { data: candidates, isLoading: loadingCandidates } = useCandidates();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { data: detail } = useCandidateDetail(selectedId);
+  const sourceCandidateId = detail?.source_candidate_id ?? null;
   const [matches, setMatches] = useState<MatchResult[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
   const [appliedJobIds, setAppliedJobIds] = useState<Set<number>>(new Set());
@@ -212,23 +213,35 @@ export function CandidateDashboard() {
   });
 
   const uploadCV = useMutation({
-    mutationFn: (file: File) =>
-      api.uploadFile(`/candidates/${selectedId}/upload-cv`, file),
+    mutationFn: ({ file, sourceCvId }: { file: File; sourceCvId: number }) =>
+      sourceCandidateId
+        ? api.uploadFile(`/candidates/${sourceCandidateId}/upload-cv`, file, {
+            sourceCvId,
+          })
+        : Promise.reject(new Error("Candidate has no source ID")),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["candidate", selectedId] });
       toast.success("CV uploaded");
     },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : "Failed to upload CV");
+    },
   });
 
   const processCV = useMutation({
-    mutationFn: (cvId: number) =>
-      api.post(`/candidates/${selectedId}/process/${cvId}`, {}),
+    mutationFn: (cvSourceId: number) =>
+      sourceCandidateId
+        ? api.post(`/candidates/${sourceCandidateId}/process/${cvSourceId}`, {})
+        : Promise.reject(new Error("Candidate has no source ID")),
     onSuccess: () => {
       toast.success("CV processing started");
       setTimeout(
         () => qc.invalidateQueries({ queryKey: ["candidate", selectedId] }),
         3000
       );
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : "Failed to process CV");
     },
   });
 
@@ -337,52 +350,78 @@ export function CandidateDashboard() {
             <div className="p-3 border-b">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium">CVs</span>
-                <label className="text-xs px-2 py-1 rounded bg-primary/10 text-primary cursor-pointer hover:bg-primary/20">
+                <label
+                  className={cn(
+                    "text-xs px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20",
+                    !sourceCandidateId && "cursor-not-allowed opacity-50 hover:bg-primary/10"
+                  )}
+                >
                   Upload CV
                   <input
                     type="file"
                     className="hidden"
                     accept=".pdf,.docx,.txt,.md"
+                    disabled={!sourceCandidateId}
                     onChange={(e) => {
                       const f = e.target.files?.[0];
-                      if (f) uploadCV.mutate(f);
+                      if (!sourceCandidateId) {
+                        toast.error("Candidate does not have a source ID yet");
+                        return;
+                      }
+                      if (!f) return;
+
+                      const rawSourceCvId = window.prompt("Source CV ID:");
+                      if (rawSourceCvId == null) return;
+
+                      const sourceCvId = Number(rawSourceCvId);
+                      if (!Number.isInteger(sourceCvId) || sourceCvId <= 0) {
+                        toast.error("Please enter a valid source CV ID");
+                        return;
+                      }
+
+                      uploadCV.mutate({ file: f, sourceCvId });
                     }}
                   />
                 </label>
               </div>
-              {detail.cvs?.map((cv: CandidateCV) => (
-                <div
-                  key={cv.id}
-                  className="p-2 rounded border text-xs mb-1 flex items-center justify-between"
-                >
-                  <div>
-                    <div className="font-medium">{cv.original_filename}</div>
-                    <div className="text-muted-foreground">
-                      {cv.status} · {cv.chunk_count} chunks
-                    </div>
-                    {cv.skills_extracted && cv.skills_extracted.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {cv.skills_extracted.slice(0, 8).map((s: string) => (
-                          <span
-                            key={s}
-                            className="px-1 py-0.5 rounded bg-primary/10 text-[10px]"
-                          >
-                            {s}
-                          </span>
-                        ))}
+              {detail.cvs?.map((cv: CandidateCV) => {
+                const cvSourceId = cv.source_cv_id;
+                return (
+                  <div
+                    key={cv.id}
+                    className="p-2 rounded border text-xs mb-1 flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="font-medium">{cv.original_filename}</div>
+                      <div className="text-muted-foreground">
+                        {cv.status} · {cv.chunk_count} chunks
                       </div>
-                    )}
+                      {cv.skills_extracted && cv.skills_extracted.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {cv.skills_extracted.slice(0, 8).map((s: string) => (
+                            <span
+                              key={s}
+                              className="px-1 py-0.5 rounded bg-primary/10 text-[10px]"
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {cv.status === "pending" && sourceCandidateId && cvSourceId != null ? (
+                      <button
+                        onClick={() => processCV.mutate(cvSourceId!)}
+                        className="text-[10px] px-2 py-1 rounded bg-primary text-primary-foreground"
+                      >
+                        Process
+                      </button>
+                    ) : cv.status === "pending" ? (
+                      <span className="text-[10px] text-muted-foreground">No source ID</span>
+                    ) : null}
                   </div>
-                  {cv.status === "pending" && (
-                    <button
-                      onClick={() => processCV.mutate(cv.id)}
-                      className="text-[10px] px-2 py-1 rounded bg-primary text-primary-foreground"
-                    >
-                      Process
-                    </button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="p-3 flex-1 flex flex-col items-center justify-center">

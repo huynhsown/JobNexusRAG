@@ -65,7 +65,21 @@ class Settings(BaseSettings):
     MATCHING_LOCATION_WEIGHT: float = 0.10
     MATCHING_SALARY_WEIGHT: float = 0.05
 
-    CORS_ORIGINS: list[str] = ["http://localhost:5174", "http://localhost:3000"]
+    CORS_ORIGINS: list[str] = [
+        "https://ai.itrecruitment.dpdns.org",
+        "https://itrecruitment.dpdns.org",
+        "http://localhost:5174",
+        "http://localhost:3000",
+    ]
+
+    # API key auth for public API
+    API_KEY_ENABLED: bool = Field(default=False)
+    API_KEYS: str = Field(default="")
+    API_KEY_HEADER: str = Field(default="X-API-Key")
+    API_KEY_PROTECTED_PREFIXES: str = Field(default="/api/")
+    API_KEY_EXCLUDED_PREFIXES: str = Field(
+        default="/health,/ready,/docs,/redoc,/openapi.json,/static/"
+    )
 
     model_config = {
         "env_file": str(ENV_FILE),

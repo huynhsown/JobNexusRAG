@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +15,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine, Base
+from app.core.security import install_api_key_middleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,6 +78,52 @@ app = FastAPI(
     redirect_slashes=False,
 )
 
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    components = openapi_schema.setdefault("components", {})
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Authorization header: Bearer <token>",
+    }
+    security_schemes["ApiKeyAuth"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": settings.API_KEY_HEADER,
+        "description": f"API key header: {settings.API_KEY_HEADER}",
+    }
+
+    protected_prefixes = tuple(
+        p.strip() for p in settings.API_KEY_PROTECTED_PREFIXES.split(",") if p.strip()
+    ) or ("/api/",)
+    for path, path_item in openapi_schema.get("paths", {}).items():
+        if not any(path.startswith(prefix) for prefix in protected_prefixes):
+            continue
+        for method in ("get", "post", "put", "patch", "delete", "options", "head"):
+            operation = path_item.get(method)
+            if not operation:
+                continue
+            # Require both schemes so Swagger includes both headers when authorized.
+            operation["security"] = [{"ApiKeyAuth": [], "BearerAuth": []}]
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -84,6 +132,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+install_api_key_middleware(app, settings, logger)
 
 
 @app.exception_handler(Exception)

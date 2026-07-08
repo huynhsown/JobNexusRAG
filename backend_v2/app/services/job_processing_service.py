@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from app.models.candidate import CandidateCV, CVStatus, Candidate
 from app.models.job import JobPosting, JobStatus
+from app.services.candidate_reference_service import CandidateReferenceService
 from app.services.deep_document_parser import DeepDocumentParser
 from app.services.embedder import get_embedding_service
 from app.services.vector_job_collections import (
@@ -44,7 +45,7 @@ class JobProcessingService:
 
     async def process_cv(self, cv_id: int, file_path: str) -> int:
         """
-        Process a CV through the full pipeline.
+        Process a CV through the full pipeline using the AI DB internal CV id.
 
         Returns number of chunks created.
         """
@@ -55,7 +56,39 @@ class JobProcessingService:
         if cv is None:
             raise ValueError(f"CandidateCV {cv_id} not found")
 
+        candidate_result = await self.db.execute(
+            select(Candidate).where(Candidate.id == cv.candidate_id)
+        )
+        candidate = candidate_result.scalar_one_or_none()
+        if candidate is None:
+            raise ValueError(f"Candidate {cv.candidate_id} not found")
+
+        return await self._process_candidate_cv(candidate, cv, file_path)
+
+    async def process_cv_by_source_ids(
+        self,
+        source_candidate_id: int,
+        source_cv_id: int,
+        file_path: str,
+    ) -> int:
+        """
+        Process a CV after resolving main-DB source IDs into AI DB records.
+        """
+        resolver = CandidateReferenceService(self.db)
+        candidate, cv = await resolver.require_candidate_cv_pair(
+            source_candidate_id=source_candidate_id,
+            source_cv_id=source_cv_id,
+        )
+        return await self._process_candidate_cv(candidate, cv, file_path)
+
+    async def _process_candidate_cv(
+        self,
+        candidate: Candidate,
+        cv: CandidateCV,
+        file_path: str,
+    ) -> int:
         start_time = time.time()
+        cv_id = cv.id
 
         try:
             cv.status = CVStatus.PARSING
@@ -77,11 +110,7 @@ class JobProcessingService:
             cv.education_extracted = profile.get("education", [])
             cv.summary_extracted = profile.get("summary", "")
 
-            cand_result = await self.db.execute(
-                select(Candidate).where(Candidate.id == cv.candidate_id)
-            )
-            candidate = cand_result.scalar_one_or_none()
-            if candidate and profile:
+            if profile:
                 if profile.get("desired_role") and not candidate.desired_role:
                     candidate.desired_role = profile["desired_role"]
                 if profile.get("experience_years") and not candidate.experience_years:
@@ -104,7 +133,9 @@ class JobProcessingService:
                 metadatas = [
                     {
                         "cv_id": cv_id,
+                        "source_cv_id": cv.source_cv_id,
                         "candidate_id": cv.candidate_id,
+                        "is_searchable": cv.is_searchable,
                         "chunk_index": c.chunk_index,
                         "source": c.source_file,
                         "page_no": c.page_no,
@@ -225,6 +256,7 @@ class JobProcessingService:
                 metadatas = [
                     {
                         "job_id": job_id,
+                        "source_job_id": job.source_job_id,
                         "company_id": job.company_id,
                         "chunk_index": getattr(c, "chunk_index", i),
                         "source": getattr(c, "source_file", job.title),
@@ -344,7 +376,7 @@ class JobProcessingService:
 
         try:
             return json.loads(text.strip())
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             import re
 
             match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -353,6 +385,11 @@ class JobProcessingService:
                     return json.loads(match.group())
                 except json.JSONDecodeError:
                     pass
+            logger.warning(
+                "Failed to parse LLM JSON response: %s | preview=%r",
+                exc,
+                text[:500],
+            )
             return {}
 
     @staticmethod

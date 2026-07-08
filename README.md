@@ -386,8 +386,8 @@ All endpoints are prefixed with `/api/v1`. Interactive docs: `http://localhost:8
 | `GET` | `/candidates/{id}` | Get candidate with CVs and extracted data |
 | `PUT` | `/candidates/{id}` | Update candidate profile |
 | `DELETE` | `/candidates/{id}` | Delete candidate + CVs + chunks |
-| `POST` | `/candidates/{id}/upload-cv` | Upload a CV file |
-| `POST` | `/candidates/{id}/process/{cv_id}` | Trigger CV processing |
+| `POST` | `/candidates/{source_candidate_id}/upload-cv` | Upload a CV file with `sourceCvId` |
+| `POST` | `/candidates/{source_candidate_id}/process/{source_cv_id}` | Trigger CV processing |
 | `GET` | `/candidates/{id}/recommendations` | Get job recommendations for a candidate |
 
 ### Jobs & companies
@@ -474,4 +474,3 @@ Copyright &copy; 2026 Le Duc Dat
 This project is forked and modified from NexusRAG by Le Duc Dat.
 
 </div>
-

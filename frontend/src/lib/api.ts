@@ -1,13 +1,25 @@
 const BASE_URL = import.meta.env.VITE_API_URL || "/api/v1";
+const API_KEY_HEADER = import.meta.env.VITE_API_KEY_HEADER || "X-API-Key";
+const API_KEY = import.meta.env.VITE_API_KEY || "";
+
+function withApiKeyHeaders(headers?: HeadersInit): Headers {
+  const merged = new Headers(headers);
+  if (API_KEY) {
+    merged.set(API_KEY_HEADER, API_KEY);
+  }
+  return merged;
+}
 
 class ApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
+    const headers = withApiKeyHeaders(options?.headers);
+    if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+
     const response = await fetch(`${BASE_URL}${path}`, {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-      },
+      headers,
     });
 
     if (!response.ok) {
@@ -28,7 +40,10 @@ class ApiClient {
 
   /** Fetch a plain-text (or markdown) response as a string. */
   async getText(path: string): Promise<string> {
-    const response = await fetch(`${BASE_URL}${path}`, { method: "GET" });
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method: "GET",
+      headers: withApiKeyHeaders(),
+    });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "Unknown error" }));
       throw new Error(error.detail || `API Error: ${response.status}`);
@@ -62,7 +77,9 @@ class ApiClient {
   }
 
   async downloadFile(path: string, filename: string): Promise<void> {
-    const response = await fetch(`${BASE_URL}${path}`);
+    const response = await fetch(`${BASE_URL}${path}`, {
+      headers: withApiKeyHeaders(),
+    });
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "Download failed" }));
@@ -80,13 +97,22 @@ class ApiClient {
     URL.revokeObjectURL(url);
   }
 
-  async uploadFile<T>(path: string, file: File): Promise<T> {
+  async uploadFile<T>(
+    path: string,
+    file: File,
+    fields?: Record<string, string | number | boolean | null | undefined>
+  ): Promise<T> {
     const formData = new FormData();
     formData.append("file", file);
+    Object.entries(fields ?? {}).forEach(([key, value]) => {
+      if (value === null || value === undefined) return;
+      formData.append(key, String(value));
+    });
 
     const response = await fetch(`${BASE_URL}${path}`, {
       method: "POST",
       body: formData,
+      headers: withApiKeyHeaders(),
     });
 
     if (!response.ok) {
@@ -99,6 +125,7 @@ class ApiClient {
 }
 
 export const api = new ApiClient();
+export { API_KEY_HEADER, API_KEY, withApiKeyHeaders };
 
 export function applyCandidateToJob(jobId: number, candidateId: number) {
   return api.post<{
